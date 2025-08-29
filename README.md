@@ -34,13 +34,13 @@ WSL2 端口转发管理脚本，配合 `wsl2host` 项目，一键管理端口转
 
 在 WSL2 终端中运行以下命令：
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sjtt2/wsl2host-port-bridge/main/install.sh | sudo bash
+sudo curl -fsSL https://raw.githubusercontent.com/sjtt2/wsl2host-port-bridge/main/install.sh | sudo bash
 ```
 
 ## 🗑️ 卸载 (Uninstallation)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sjtt2/wsl2host-port-bridge/main/uninstall.sh | sudo bash
+sudo curl -fsSL https://raw.githubusercontent.com/sjtt2/wsl2host-port-bridge/main/uninstall.sh | sudo bash
 ```
 
 

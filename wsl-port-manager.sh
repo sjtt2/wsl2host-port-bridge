@@ -17,9 +17,9 @@ LIST="🔍"       # 列表：用于展示内容
 PLUS="➕"       # 加号：用于添加操作
 MINUS="➖"      # 减号：用于删除操作
 
-# 获取当前WSL发行版名称并生成标准化主机名
+# 获取当前WSL发行版名称并生成wsl2host标准主机名
 get_wsl_hostname() {
-    # 从/etc/os-release获取发行版名称（兼容大多数Linux发行版）
+    # 从/etc/os-release获取发行版名称
     if [ -f "/etc/os-release" ]; then
         . /etc/os-release
         local distro_name="$NAME"
@@ -34,15 +34,15 @@ get_wsl_hostname() {
     echo "${normalized_name}.wsl"
 }
 
-# 配置文件路径（系统级配置目录）
+# 配置文件路径
 PORT_CONFIG="/etc/wsl-port-manager/ports.conf"
-# 启动脚本路径（系统自动执行目录）
+# 启动脚本路径
 FORWARD_SCRIPT="/etc/profile.d/wsl-ssh-portforward.sh"
 
-# 确保配置目录和文件存在（符合Linux规范）
+# 确保配置目录和文件存在
 sudo mkdir -p /etc/wsl-port-manager/
 sudo touch "$PORT_CONFIG"
-sudo chmod 644 "$PORT_CONFIG"  # 系统配置文件通常为644权限
+sudo chmod 644 "$PORT_CONFIG" 
 
 # 确保启动脚本存在
 if [ ! -f "$FORWARD_SCRIPT" ]; then
@@ -63,7 +63,7 @@ define_aliases() {
 
 # 启动时自动加载端口转发
 load_ports_on_startup() {
-    # 获取当前WSL的IP和标准化主机名
+    # 获取当前WSL的IP和wsl2host主机名
     WSL_IP=$(hostname -I | awk '{print $1}')
     WSL_HOSTNAME=$(get_wsl_hostname)
     
@@ -163,7 +163,7 @@ list_ports() {
     echo -e "${CYAN}  ${INFO} 映射规则: Windows端口 → WSL对应端口${NC}"
     echo -e "${BLUE}---------------------------------------------${NC}"
     
-    # 显示端口列表（带序号）
+    # 显示端口列表
     if [ "$port_count" -gt 0 ]; then
         grep -v '^$' "$PORT_CONFIG" | sort -n | nl -w2 -s'. ' | while read -r line; do
             echo -e "${BLUE}  ${ARROW} $line${NC}"

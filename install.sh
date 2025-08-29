@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# 配置参数 - 替换为你的GitHub仓库信息
-GITHUB_REPO="sjtt2/wsl2host-port-bridge"  # 仓库路径：用户名/仓库名
+# 配置参数
+GITHUB_REPO="sjtt2/wsl2host-port-bridge"  # 仓库路径
 SCRIPT_FILE="wsl-port-manager.sh"         # 主脚本文件名
 FORWARD_SCRIPT_NAME="wsl-ssh-portforward.sh"  # 转发脚本名
 ALIAS_SCRIPT_NAME="wsl-port-aliases.sh"       # 别名脚本名
@@ -12,6 +12,15 @@ SCRIPT_DEST="$DEST_DIR/$SCRIPT_FILE"
 PROFILE_D_DIR="/etc/profile.d"
 FORWARD_SCRIPT_DEST="$PROFILE_D_DIR/$FORWARD_SCRIPT_NAME"
 ALIAS_SCRIPT_DEST="$PROFILE_D_DIR/$ALIAS_SCRIPT_NAME"
+
+# 关键修改：获取登录用户的家目录
+if [ -n "$SUDO_USER" ]; then
+    # 如果是sudo运行，获取原始用户的家目录
+    USER_HOME=$(eval echo ~"$SUDO_USER")
+else
+    # 如果不是sudo运行（直接root），使用当前用户家目录
+    USER_HOME="$HOME"
+fi
 
 # 检查是否为root权限
 if [ "$(id -u)" -ne 0 ]; then
@@ -92,11 +101,16 @@ chmod +x "$ALIAS_SCRIPT_DEST" || {
 
 # 配置Zsh环境（修改.zshrc）
 echo "4. 配置Zsh环境..."
-ZSHRC="$HOME/.zshrc"
+# 使用登录用户的家目录路径
+ZSHRC="$USER_HOME/.zshrc"
 
 # 确保.zshrc存在
 if [ ! -f "$ZSHRC" ]; then
     touch "$ZSHRC"
+    # 修复权限：将文件所有者改为登录用户
+    if [ -n "$SUDO_USER" ]; then
+        chown "$SUDO_USER:$SUDO_USER" "$ZSHRC"
+    fi
     chmod 644 "$ZSHRC"
 fi
 
@@ -120,4 +134,3 @@ echo "  • Zsh用户：source $ZSHRC"
 echo "或重启终端后，直接使用 'port' 命令开始管理端口"
 echo "示例：port add 22  # 添加22端口转发"
 echo "Tip：Bash对全部用户起效，Zsh只对当前用户起效，切换用户请自行添加到~/.zshrc"
-
