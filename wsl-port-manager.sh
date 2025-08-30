@@ -17,41 +17,89 @@ PLUS="➕"       # 加号：用于添加操作
 MINUS="➖"      # 减号：用于删除操作
 
 # --------------------------
-# 新增：WSL 版本检测（适配 go-wsl2-host 逻辑）
+# 完全对齐go-wsl2-host的WSL版本检测逻辑
+# 1. 执行wsl.exe -l -v获取原始输出
+# 2. 解析输出提取当前发行版的版本号（1或2）
 # --------------------------
 get_wsl_version() {
-    local distro_name=$(get_current_wsl_distro_with_version | sed 's/-[0-9]*$//')  # 提取发行版基础名（如 Ubuntu）
+    # 获取当前WSL实例的精确名称（从/proc/sys/kernel/hostname，同wsl2host）
+    local current_hostname=$(cat /proc/sys/kernel/hostname)
+    
+    # 执行wsl.exe -l -v并处理编码（同wslcli.ListAll()）
     local wsl_list_output
+    wsl_list_output=$(powershell.exe -Command "wsl.exe -l -v" 2>/dev/null)
+    # 处理Windows命令输出的UTF-16LE编码问题
+    wsl_list_output=$(echo "$wsl_list_output" | iconv -f UTF-16LE -t UTF-8 2>/dev/null | tr -d '\r')
     
-    # 执行 wsl.exe -l -v 获取所有发行版信息（同 go-wsl2-host 的 wslcli.ListAll()）
-    wsl_list_output=$(powershell.exe -Command "wsl.exe -l -v" 2>/dev/null | iconv -f UTF-16LE -t UTF-8 2>/dev/null)
-    
+    # 检查命令输出是否有效
     if [ -z "$wsl_list_output" ]; then
-        echo -e "${YELLOW}${WARNING} 警告：无法获取 WSL 版本信息，默认按 WSL2 处理${NC}"
-        echo "2"
+        echo -e "${YELLOW}${WARNING} 警告：wsl.exe -l -v执行失败，无法获取版本信息${NC}"
         return 1
     fi
 
-    # 解析输出：匹配当前发行版的版本（1/2），处理默认发行版的 "*" 标记
-    local version=$(echo "$wsl_list_output" | awk -v distro="$distro_name" '
-        NR>1 {  # 跳过表头（NAME STATE VERSION）
-            gsub(/^\*/, "", $1)  # 移除默认发行版的 "*"
-            # 匹配发行版名称（支持名称含空格，如 "Kali Linux"）
-            name = $1
-            for (i=2; i<=NF-2; i++) name = name " " $i  # 合并名称字段
-            state = $(NF-1)
-            ver = $NF
-            if (name ~ distro) print ver  # 匹配当前发行版，输出版本
-        }
-    ' | head -n 1)
+    # 按行分割输出（同strings.Split(output, "\r\n")）
+    local lines=()
+    while IFS= read -r line; do
+        lines+=("$line")
+    done <<< "$wsl_list_output"
 
-    # 验证版本合法性
-    if [[ "$version" =~ ^[12]$ ]]; then
+    # 跳过表头行（同lines = lines[1:]）
+    if [ ${#lines[@]} -lt 2 ]; then
+        echo -e "${YELLOW}${WARNING} 警告：WSL发行版列表为空${NC}"
+        return 1
+    fi
+    local data_lines=("${lines[@]:1}")  # 从第2行开始处理数据
+
+    # 遍历每行解析发行版信息（同Go代码的for循环）
+    local version=""
+    for line in "${data_lines[@]}"; do
+        # 跳过空行
+        line=$(echo "$line" | xargs)  # 等效于strings.TrimSpace()
+        if [ -z "$line" ]; then
+            continue
+        fi
+
+        # 处理默认发行版的"*"标记（同Go代码的if line[0] == '*'）
+        local is_default=0
+        if [[ "$line" == \* ]]; then
+            is_default=1
+            line=$(echo "$line" | cut -c 2- | xargs)  # 移除*并修剪空格
+        fi
+
+        # 按空格分割字段（同strings.Fields(line)）
+        # 兼容发行版名称含空格的情况（如"Kali Linux"）
+        local fields=($line)
+        local field_count=${#fields[@]}
+        if [ $field_count -lt 3 ]; then
+            continue  # 跳过格式不正确的行
+        fi
+
+        # 提取名称、状态、版本（同Go代码的fields[0], fields[1], fields[2]）
+        local distro_name="${fields[0]}"
+        # 合并名称中包含空格的情况（合并前n-2个字段）
+        if [ $field_count -gt 3 ]; then
+            local name_parts=("${fields[@]:0:$field_count-2}")
+            distro_name=$(IFS=' '; echo "${name_parts[*]}")
+        fi
+        local state="${fields[$field_count-2]}"
+        local distro_version="${fields[$field_count-1]}"
+
+        # 匹配当前发行版（通过hostname精确匹配）
+        if [ "$distro_name" = "$current_hostname" ]; then
+            # 验证版本号是否为1或2（同Go代码的strconv.ParseInt）
+            if [[ "$distro_version" =~ ^[12]$ ]]; then
+                version="$distro_version"
+                break
+            fi
+        fi
+    done
+
+    # 返回版本检测结果
+    if [ -n "$version" ]; then
         echo "$version"
         return 0
     else
-        echo -e "${YELLOW}${WARNING} 警告：WSL 版本解析异常（获取到: $version），默认按 WSL2 处理${NC}"
-        echo "2"
+        echo -e "${YELLOW}${WARNING} 警告：未找到当前发行版的版本信息${NC}"
         return 1
     fi
 }
@@ -118,20 +166,20 @@ load_ports_on_startup() {
     local WSL_VERSION=$(get_wsl_version)  # 获取 WSL 版本
     local WSL_IP
 
-    # 适配 WSL 版本：WSL1 固定 127.0.0.1，WSL2 动态获取 IP
-    if [ "$WSL_VERSION" -eq 1 ]; then
-        WSL_IP="127.0.0.1"
-        echo -e "${GREEN}${ARROW} 检测到 WSL1，使用固定 IP: $WSL_IP（主机名: $WSL_HOSTNAME）${NC}"
-    else
+    # 严格区分WSL1/WSL2的IP处理（同go-wsl2-host逻辑）
+    if [ "$WSL_VERSION" = "1" ]; then
+        WSL_IP="127.0.0.1"  # WSL1固定IP
+        echo -e "${GREEN}${ARROW} 检测到WSL1，使用固定IP: $WSL_IP（主机名: $WSL_HOSTNAME）${NC}"
+    elif [ "$WSL_VERSION" = "2" ]; then
+        # WSL2动态获取IP
         WSL_IP=$(hostname -I | awk '{print $1}')
         if [ -z "$WSL_IP" ]; then
             WSL_IP=$(grep -oP '(?<=inet\s)\d+(\.\d+){3}' /proc/net/fib_trie | grep -v '^127\.' | head -n 1)
         fi
-        if [ -z "$WSL_IP" ]; then
-            echo -e "${RED}${WARNING} 警告：WSL2 IP 获取失败，端口转发未配置${NC}"
-            return 1
-        fi
-        echo -e "${GREEN}${ARROW} 检测到 WSL2，动态获取 IP: $WSL_IP（主机名: $WSL_HOSTNAME）${NC}"
+        echo -e "${GREEN}${ARROW} 检测到WSL2，动态IP: $WSL_IP（主机名: $WSL_HOSTNAME）${NC}"
+    else
+        echo -e "${RED}${WARNING} 错误：WSL版本检测失败，无法加载端口转发${NC}"
+        return 1
     fi
 
     # 加载端口转发规则
@@ -167,9 +215,9 @@ add_port() {
     fi
 
     # 适配 WSL 版本获取 IP
-    if [ "$WSL_VERSION" -eq 1 ]; then
+    if [ "$WSL_VERSION" = "1" ]; then
         WSL_IP="127.0.0.1"
-    else
+    elif [ "$WSL_VERSION" = "2" ]; then
         WSL_IP=$(hostname -I | awk '{print $1}')
         if [ -z "$WSL_IP" ]; then
             WSL_IP=$(grep -oP '(?<=inet\s)\d+(\.\d+){3}' /proc/net/fib_trie | grep -v '^127\.' | head -n 1)
@@ -178,6 +226,9 @@ add_port() {
             echo -e "${RED}${WARNING} 错误：WSL2 IP 获取失败，无法添加端口转发${NC}"
             return 1
         fi
+    else
+        echo -e "${RED}${WARNING} 错误：WSL版本检测失败，无法添加端口转发${NC}"
+        return 1
     fi
 
     # 配置端口转发
@@ -269,13 +320,8 @@ show_help() {
     echo -e "${GREEN}=============================================${NC}"
 }
 
-# 命令解析（原有逻辑不变）
-define_aliases() {
-    if ! alias | grep -q "portadd="; then
-        alias port='wsl-port-manager.sh port'
-        alias portadd='wsl-port-manager.sh portadd'
-    fi
-}
+# 命令解析
+define_aliases
 
 case "$1" in
     port)
