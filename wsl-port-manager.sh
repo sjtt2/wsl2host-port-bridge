@@ -298,3 +298,12 @@ case "$1" in
         esac
         ;;
     portadd)
+        add_port "$2"
+        ;;
+    --load-on-startup)
+        load_ports_on_startup
+        ;;
+    *)
+        show_help
+        ;;
+esac
